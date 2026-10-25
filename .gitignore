@@ -1,0 +1,12 @@
+# 의존성
+node_modules/
+
+# 원본 그림 (용량이 커서 저장소에 올리지 않음, 팀 공유 드라이브로 전달)
+wargame reference/캐릭터 디자인/
+wargame reference/게임 틀 디자인/
+wargame reference/누끼 작업중/1차-외곽선분리/
+wargame reference/누끼 작업중/2차-격자정리/
+
+# 기타
+.DS_Store
+Thumbs.db

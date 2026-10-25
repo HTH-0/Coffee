@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KLOAD 커피 워게임</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Jua&family=Black+Han+Sans&family=Silkscreen:wght@700&family=Noto+Serif+KR:wght@700&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/galmuri@2.40.3/dist/galmuri.css" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="viewport">
+    <div id="app">
+
+      <!-- ───────── 메인 ───────── -->
+      <section id="screen-title" class="screen is-active">
+        <img class="title-bg" src="assets/title-bg.webp" alt="">
+        <div class="title-glow"></div>
+        <div class="leaves" id="leaves" aria-hidden="true"></div>
+        <div class="title-wrap">
+          <div class="logo-wrap">
+            <h1 class="logo-pixel" id="logo" aria-label="KLOAD"></h1>
+            <div class="sparkles" id="sparkles" aria-hidden="true"></div>
+          </div>
+          <p class="title-sub">문제를 풀어 몬스터를 쓰러뜨리고, 한 잔의 커피를 완성하세요.</p>
+          <ol class="journey" id="journey"></ol>
+          <div class="title-actions">
+            <button type="button" class="pixel-btn pixel-btn-orange" id="btn-start">시작하기</button>
+            <button type="button" class="pixel-btn pixel-btn-blue" id="btn-continue" disabled>이어하기</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── 장 지도 (세이브 포인트) ───────── -->
+      <section id="screen-map" class="screen">
+        <img class="map-bg" src="assets/title-bg.webp" alt="">
+        <div class="map-shade"></div>
+        <header class="map-top">
+          <div class="map-top-left">
+            <button type="button" class="wood-btn wood-square" id="btn-map-back" aria-label="전투로 돌아가기">&#8592;</button>
+            <span class="logo">KLOAD</span>
+            <nav class="chapter-tabs" id="chapter-tabs"></nav>
+          </div>
+          <button type="button" class="wood-btn" id="btn-map-reset">처음부터</button>
+        </header>
+
+        <div class="map-head">
+          <h2 class="map-title" id="map-title">1장 커피나무</h2>
+          <p class="map-sub" id="map-sub"></p>
+        </div>
+
+        <svg class="map-path" viewBox="0 0 1280 720" aria-hidden="true">
+          <path id="path-shadow" d="" />
+          <path id="path-bg" d="" />
+          <path id="path-edge" d="" />
+          <path id="path-done" d="" />
+        </svg>
+        <div class="map-nodes" id="map-nodes"></div>
+
+        <div class="map-legend wood-panel" id="map-legend">
+          <div><i class="dot dot-done"></i>뚫은 문제 (세이브 포인트)</div>
+          <div><i class="dot dot-now"></i>지금 풀 문제</div>
+          <div><i class="dot dot-lock"></i>잠긴 문제</div>
+          <div><i class="dot dot-boss"></i>장의 마지막 문제</div>
+        </div>
+
+        <div class="map-tip wood-panel" id="map-tip"></div>
+        <div class="map-progress" id="map-progress"></div>
+      </section>
+
+      <!-- ───────── 전투 ───────── -->
+      <section id="screen-battle" class="screen">
+        <div class="scene" id="scene">
+          <div class="scene-art" id="scene-art"></div>
+        </div>
+        <div class="fx" id="fx"></div>
+        <div class="flash" id="flash"></div>
+
+        <header class="hud-top">
+          <span class="logo">KLOAD</span>
+          <ol class="chapter-steps" id="chapter-steps"></ol>
+          <button type="button" class="hud-link" id="btn-to-map">지도</button>
+          <button type="button" class="hud-link" id="btn-to-title">메인</button>
+        </header>
+        <p class="dialog-hint" aria-hidden="true">테스트 플래그: <code>test</code></p>
+
+        <!-- 몬스터 체력 패널 -->
+        <div class="hp-plate" id="hp-plate">
+          <div class="hp-body">
+            <div class="hp-name" id="hp-name">숲의 수호자</div>
+            <div class="hp-bar">
+              <div class="hp-fill" id="hp-fill"></div>
+              <span class="hp-text" id="hp-text">HP: 10/10</span>
+            </div>
+            <svg class="hp-heart" id="hp-heart" viewBox="0 0 32 28" aria-hidden="true">
+              <path d="M16 27 3 14C-1 10 0 3 6 1.5 10 .5 13 2.5 16 6c3-3.5 6-5.5 10-4.5 6 1.5 7 8.5 3 12.5Z" fill="#FF6A3D" stroke="#5A1406" stroke-width="2.5"/>
+              <path d="M7 6c-2 1-3 3-2 5" stroke="#FFD0B8" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+            </svg>
+            <div class="hp-sub" id="hp-sub">체력: 10/10</div>
+          </div>
+          <div class="hp-portrait" id="hp-portrait"></div>
+          <span class="hp-lv" id="hp-lv">1</span>
+        </div>
+
+        <!-- 대사 상자: [문제] 문구 + FLAG 입력 + 제출 + 문제보기 -->
+        <form class="dialog" id="flag-form" autocomplete="off">
+          <p class="dialog-text" id="dialog-text"></p>
+          <div class="flag-row">
+            <input id="flag-input" type="text" placeholder="FLAG를 입력하세요" aria-label="FLAG 입력" spellcheck="false">
+            <button type="submit" class="game-btn game-btn-gold">제출</button>
+            <button type="button" class="game-btn game-btn-tan" id="btn-quest">문제보기</button>
+          </div>
+          <svg class="dialog-orn" viewBox="0 0 900 24" aria-hidden="true">
+            <path d="M0 12 H380 M520 12 H900" stroke="rgba(255,255,255,.18)" stroke-width="2"/>
+            <path d="M380 12 q20 -14 40 0 t40 0 t40 0 M410 12 q10 8 20 0 M470 12 q10 8 20 0" stroke="rgba(255,255,255,.28)" stroke-width="2" fill="none"/>
+          </svg>
+        </form>
+      </section>
+
+      <!-- ───────── 엔딩 ───────── -->
+      <section id="screen-ending" class="screen">
+        <div class="ending-art" id="ending-art"></div>
+        <div class="ending-text">
+          <p class="eyebrow">ENDING</p>
+          <h2>커피 한 잔 완성</h2>
+          <p>나무에서 열매를 빼앗고, 볶고, 내려서 드디어 커피 한 잔이 완성됐습니다.<br>이제 잠시 쉬면서 커피를 즐겨 보세요.</p>
+          <button type="button" class="game-btn game-btn-gold" id="btn-again">처음부터 다시</button>
+        </div>
+      </section>
+
+      <!-- 장 전환 -->
+      <div class="transition" id="transition" aria-hidden="true">
+        <div class="tr-inner">
+          <p class="tr-eyebrow" id="tr-eyebrow">CHAPTER 2</p>
+          <h2 id="tr-title">열매 군단</h2>
+          <p id="tr-sub"></p>
+        </div>
+      </div>
+
+      <!-- 문제 보기 -->
+      <div class="modal" id="modal-quest" hidden>
+        <div class="modal-box" id="quest-box">
+          <p class="eyebrow" id="quest-eyebrow">1장 · 문제 1 / 10</p>
+          <h3 id="quest-title">문제 준비 중</h3>
+          <p id="quest-desc"></p>
+          <iframe id="quest-frame" title="문제 페이지" hidden referrerpolicy="no-referrer" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>
+          <button type="button" class="game-btn game-btn-gold" data-close>닫기</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/art.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
