@@ -42,13 +42,16 @@ router.post('/:no/check', find, async (req, res) => {
   const prefix = config.origin + '/ch2/' + p.no + '/play';
   if (String(req.get('user-agent')).includes(bot.BOT_MARK)) return res.status(403).json({ ok: false, message: '봇은 확인 요청을 보낼 수 없습니다.' });
   if (!p.ready) return res.json({ ok: false, message: '아직 준비 중인 문제입니다.' });
+  if (p.no === 5) return res.json({ ok: false, message: '알림창은 떴지만, 이 문제는 명예 관리인 화면에서 떠야 합니다. "명예 관리인에게 확인 요청"을 눌러 주세요.' });
   if (!(url === prefix || ['?', '#', '/'].some(c => url.startsWith(prefix + c)))) {
     return res.json({ ok: false, message: '이 문제의 페이지 주소만 확인할 수 있습니다.' });
   }
   if (pending.has(req.ip)) return res.json({ ok: false, message: '이전 확인이 아직 진행 중입니다. 잠시 뒤 다시 시도해 주세요.' });
   pending.add(req.ip);
   try {
-    const fired = await bot.check(url, { answer: p.answer });
+    // 6번: 봇은 열쇠 번호가 든 쿠키를 들고 연다 (참가자 브라우저에는 미지급 표시만 있음)
+    const opts = p.no === 6 ? { answer: BENCH_KEY, cookies: [{ name: 'bench_key', value: BENCH_KEY }] } : { answer: p.answer };
+    const fired = await bot.check(url, opts);
     res.json(fired
       ? { ok: true, flag: config.flags.ch2[p.no - 1] }
       : { ok: false, message: '서버가 같은 주소를 열어 봤지만 목표한 알림창이 뜨지 않았습니다. 주소만으로 다시 재현되는지 확인해 보세요.' });
@@ -131,13 +134,14 @@ function ensureBoard(req, res) {
 }
 
 // 검토 요청 버튼 (신고 폼 페이지와 내 목록 페이지에 같이 둔다)
-const REVIEW_UI = '<div class="review"><button type="button" id="review-btn">검열관에게 검토 요청</button> ' +
-  '<span class="hint">남긴 신고를 열매 군단 검열관이 열어 봅니다.</span></div>' +
+function reviewUI(no, label, hint, wait) { return '<div class="review"><button type="button" id="review-btn">' + label + '</button> ' +
+  '<span class="hint">' + hint + '</span></div>' +
   '<script>(function(){var b=document.getElementById("review-btn");b.onclick=function(){' +
-  'var s=document.getElementById("xss-status");s.className="status wait";s.textContent="검열관이 신고 목록을 여는 중...";b.disabled=true;' +
-  'fetch("/ch2/4/review",{method:"POST"}).then(function(r){return r.json()}).then(function(r){' +
-  'b.disabled=false;if(r.ok){s.className="status ok";s.textContent="검열관 화면에서 알림창 확인! 플래그: "+r.flag;}' +
-  'else{s.className="status bad";s.textContent=r.message;}}).catch(function(){b.disabled=false;s.className="status bad";s.textContent="서버에 연결하지 못했습니다.";});};})();</script>';
+  'var s=document.getElementById("xss-status");s.className="status wait";s.textContent="' + wait + '";b.disabled=true;' +
+  'fetch("/ch2/' + no + '/review",{method:"POST"}).then(function(r){return r.json()}).then(function(r){' +
+  'b.disabled=false;if(r.ok){s.className="status ok";s.textContent="관리자 화면에서 알림창 확인! 플래그: "+r.flag;}' +
+  'else{s.className="status bad";s.textContent=r.message;}}).catch(function(){b.disabled=false;s.className="status bad";s.textContent="서버에 연결하지 못했습니다.";});};})();</script>'; }
+const REVIEW_UI = reviewUI(4, '검열관에게 검토 요청', '남긴 신고를 열매 군단 검열관이 열어 봅니다.', '검열관이 신고 목록을 여는 중...');
 
 router.get('/4/play', (req, res) => {
   const p = problems[3];
@@ -204,6 +208,97 @@ router.post('/4/review', async (req, res) => {
   } finally {
     reviewing.delete(id); pending.delete(req.ip);
   }
+});
+
+// 5번 선별왕 (2차 출력 + 관리자 비밀 읽기):
+//  - 이름은 /play 에서 등록하고, 내 정보 화면에는 안전하게 글자로만 보인다.
+//  - 명예의 전당(/play/hall)은 등록된 이름을 인코딩 없이 그대로 출력한다 (의도된 취약점). 여기에는 인증 코드가 없다.
+//  - 명예 관리인 화면(/admin/:id?key=)도 같은 방식으로 이름을 출력하고, 거기에만 참가자별 선별왕 인증 코드가 숨어 있다.
+//  - "확인 요청"을 누르면 봇이 관리인 화면을 열고, 그 코드가 알림창에 뜨는지 본다.
+const hall = new Map(); // id -> {name, code}
+const KINGS = ['예가체프 반장', '시다모 반장', '안티구아 반장'];
+const ADMIN_KEY5 = require('crypto').randomBytes(16).toString('hex');
+const REVIEW5 = reviewUI(5, '명예 관리인에게 확인 요청', '등록한 이름이 올라간 명단을 명예 관리인이 열어 봅니다.', '명예 관리인이 명단을 여는 중...');
+function ensureHall(req, res) {
+  let id = readCookie(req, 'board5');
+  if (!BOARD_ID.test(id)) { id = randomId(); res.setHeader('Set-Cookie', 'board5=' + id + '; Path=/ch2/5; SameSite=Lax'); }
+  return id;
+}
+function hallList(me) {
+  const rows = KINGS.map((k, i) => '<li>' + (i + 1) + '위 ' + esc(k) + '</li>');
+  if (me) rows.push('<li>후보 ' + me.name + '</li>');
+  return '<ul class="reports">' + rows.join('') + '</ul>';
+}
+router.get('/5/play', (req, res) => {
+  const p = problems[4];
+  const id = ensureHall(req, res);
+  const me = hall.get(id);
+  const body = title(p) +
+    '<p>선별을 가장 많이 한 일꾼이 선별왕이 됩니다. 일꾼 이름을 등록하면 명예의 전당 후보에 오릅니다.</p>' +
+    '<form class="search" method="post" action="/ch2/5/name"><input name="name" placeholder="일꾼 이름" autocomplete="off"><button>등록</button></form>' +
+    (me ? '<p class="saved">내 정보: ' + esc(me.name) + '</p>' : '<p class="empty">아직 등록한 이름이 없습니다.</p>') +
+    '<p><a href="/ch2/5/play/hall">선별왕 명예의 전당 보기 →</a></p>' + REVIEW5;
+  res.send(page(p, body));
+});
+router.post('/5/name', (req, res) => {
+  const id = ensureHall(req, res);
+  const name = String((req.body && req.body.name) || '').slice(0, 300);
+  if (name) hall.set(id, { name, code: hall.has(id) ? hall.get(id).code : 'KING-' + randomId().slice(0, 8) });
+  res.redirect('/ch2/5/play');
+});
+router.get('/5/play/hall', (req, res) => {
+  const p = problems[4];
+  const id = ensureHall(req, res);
+  res.send(page(p, title(p) + '<p>선별왕 명예의 전당</p>' + hallList(hall.get(id)) +
+    '<div id="king-code" hidden>관리인에게만 표시됩니다</div>' +
+    '<p><a href="/ch2/5/play">← 내 정보</a></p>' + REVIEW5));
+});
+router.get('/5/admin/:id', (req, res) => {
+  if (req.query.key !== ADMIN_KEY5) return res.status(403).send('명예 관리인만 열 수 있습니다.');
+  const p = problems[4];
+  const me = BOARD_ID.test(req.params.id) ? hall.get(req.params.id) : null;
+  res.send(page(p, '<h1>열매 군단 선별장 <small>명예 관리인 화면</small></h1><p>선별왕 명단</p>' + hallList(me) +
+    (me ? '<div id="king-code" hidden>' + esc(me.code) + '</div>' : '')));
+});
+const reviewing5 = new Set();
+router.post('/5/review', async (req, res) => {
+  if (String(req.get('user-agent')).includes(bot.BOT_MARK)) return res.status(403).json({ ok: false, message: '봇은 요청할 수 없습니다.' });
+  const id = readCookie(req, 'board5');
+  const me = BOARD_ID.test(id) ? hall.get(id) : null;
+  if (!me) return res.json({ ok: false, message: '먼저 이름을 등록해 주세요.' });
+  if (reviewing5.has(id) || pending.has(req.ip)) return res.json({ ok: false, message: '이전 확인이 아직 진행 중입니다. 잠시 뒤 다시 시도해 주세요.' });
+  reviewing5.add(id); pending.add(req.ip);
+  try {
+    const fired = await bot.check(config.origin + '/ch2/5/admin/' + id + '?key=' + ADMIN_KEY5, { answer: me.code });
+    res.json(fired
+      ? { ok: true, flag: config.flags.ch2[4] }
+      : { ok: false, message: '명예 관리인이 명단을 열어 봤지만 인증 코드가 알림창에 뜨지 않았습니다.' });
+  } catch (e) {
+    console.error('[bot]', e.message);
+    res.json({ ok: false, message: '확인 중 오류가 났습니다. 잠시 뒤 다시 시도해 주세요.' });
+  } finally {
+    reviewing5.delete(id); pending.delete(req.ip);
+  }
+});
+
+// 6번 최근 확인한 선별대 (쿠키 읽기):
+//  - /play?bench=값 으로 선별대를 확인하면 쿠키(lastbench)에 기억하고, 화면에 안전 처리 없이 그대로 보여 준다 (의도된 취약점).
+//  - 열쇠 번호는 bench_key 쿠키에 있다. 참가자 브라우저에는 "열쇠미지급" 표시만 있고, 서버 봇만 진짜 번호를 들고 연다.
+//  - 이 쿠키는 HttpOnly 가 아니라서 페이지의 스크립트가 document.cookie 로 읽을 수 있다.
+const BENCH_KEY = 'KEY-' + require('crypto').randomBytes(4).toString('hex');
+router.get('/6/play', (req, res) => {
+  const p = problems[5];
+  let bench = readCookie(req, 'lastbench');
+  if (typeof req.query.bench === 'string') {
+    bench = req.query.bench.slice(0, 300);
+    res.append('Set-Cookie', 'lastbench=' + encodeURIComponent(bench) + '; Path=/ch2/6; SameSite=Lax');
+  }
+  if (!readCookie(req, 'bench_key')) res.append('Set-Cookie', 'bench_key=' + encodeURIComponent('열쇠미지급') + '; Path=/ch2/6; SameSite=Lax');
+  const body = title(p) +
+    '<p>선별대 이름을 입력하면 확인한 선별대로 기억해 둡니다.</p>' +
+    '<form class="search"><input name="bench" placeholder="예: B3 선별대" autocomplete="off"><button>확인</button></form>' +
+    '<p class="saved">최근 확인한 선별대: ' + (bench || '없음') + '</p>';
+  res.send(page(p, body));
 });
 
 // 아직 만들지 않은 문제: 안내 띠와 준비 중 표시
