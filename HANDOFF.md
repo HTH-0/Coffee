@@ -113,3 +113,15 @@ wargame reference/          기획서, 진행 현황 메모, 누끼 작업물(�
 - 그래서 역할을 나눴다: **AI는 문제 틀(화면, 서버, 판정, 저장 공간, 봇)을 만들고, 출제자가 직접 풀어서 풀이 문서의 페이로드 칸을 채운다.**
 - 문제를 한 번에 10개씩 만들라고 하면 막힐 수 있으니, **한 문제씩 만들고 확인**하는 방식이 안전하다.
 - 문제를 만든 뒤 AI는 "의도한 취약점이 코드에 있는지"만 확인하고, 실제 공격이 통하는지는 사용자가 직접 풀어서 확인한다.
+
+## 8. 배포 (Render 등 Docker 지원 서버)
+
+Vercel 같은 서버리스는 쓸 수 없다(서버 메모리 유지·크롬 실행 불가). 서버를 계속 켜 두는 곳에 Docker 로 올린다. 저장소 루트의 `Dockerfile` 이 크로미움까지 설치한다.
+
+1. Render → New → **Web Service** → GitHub 저장소(HTH-0/Coffee) 연결 → Runtime **Docker** (루트 디렉터리는 `./`, Dockerfile 자동 인식)
+2. 환경 변수: `ORIGIN` = 배포된 주소 (예 `https://coffee.onrender.com`, 끝에 `/` 없이)
+3. 플래그: Render 의 **Secret Files** 에 파일명 `flags.json`, 내용은 로컬 `server/flags.json` 그대로. (또는 환경 변수 `FLAGS_JSON` 에 한 줄로). 없으면 서버가 시작을 거부한다(예시 플래그로 배포되는 사고 방지).
+4. 게임의 문제 주소(`CH2_SERVER`)는 접속한 주소를 자동으로 쓰므로 따로 바꾸지 않아도 된다.
+5. **배포 전에 지울 것**: 테스트 패널과 `?ch=` 이동 (위 5절 참고).
+6. 무료 플랜은 일정 시간 접속이 없으면 잠들고 재시작 때 메모리가 초기화된다(신고 목록·등록 이름 사라짐). 대회 중에는 유료/상시 구동 권장.
+- 로컬에서 Docker 로 시험: `docker build -t kload .` → `docker run -p 3000:3000 -v <flags.json 경로>:/etc/secrets/flags.json kload`

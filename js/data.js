@@ -70,7 +70,8 @@ window.GAME_DATA = {
  * flagHash 가 null 인 문제는 아직 테스트 플래그(test)로 통과한다.
  */
 (function () {
-  var CH2_SERVER = 'http://localhost:3000/ch2/';
+  // 게임과 문제를 한 서버에서 내보내므로 접속한 주소를 그대로 쓴다 (파일로 직접 열었을 때만 로컬 서버 주소)
+  var CH2_SERVER = (/^https?:/.test(location.protocol) ? location.origin : 'http://localhost:3000') + '/ch2/';
   // [대사 상자 제목, 선별 단계, 지키는 기능, 플래그 해시]
   var CH2 = [
     ['1번 병사 · 반입 담당', '반입', '반입 기록 검색', 'fca2f2c16de42751bb024966a281c71a9fe6fe056c8682fcdb98265e2de65ebb'],
