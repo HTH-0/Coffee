@@ -23,6 +23,22 @@ assets/               title-bg(메인/지도 배경), ch1~ch4/(장별 단계 그
 wargame reference/    기획서, 캐릭터 디자인 원본 시트, 화면 디자인
 ```
 
+## 문제 서버 (server/)
+
+게임 화면과 장별 문제를 한 서버에서 내보낸다. 문제 페이지는 `/ch2/1/`처럼 장별 주소 아래에 둔다.
+
+```
+cd server
+npm install
+copy flags.example.json flags.json   (실제 플래그로 바꾼다, 저장소에는 올리지 않음)
+npm start                            → http://localhost:3000
+```
+
+- 검사 봇은 크롬을 쓴다. 경로가 다르면 `CHROME_PATH` 환경 변수로 지정한다.
+- 배포할 때는 `ORIGIN`(외부 접속 주소)과 `js/data.js`의 2장 서버 주소를 함께 바꾼다.
+- 2장 문제 흐름: 게임 문제보기 창에 문제 페이지가 바로 뜬다 → 알림창이 뜨면 페이지 위쪽에 즉시 표시되고, 페이지가 현재 주소를 서버에 자동으로 보낸다 → 서버 봇이 같은 주소를 직접 열어 확인하면 그 자리에 플래그가 나온다
+- 테스트할 때 `http://localhost:3000/?ch=2` 처럼 주소에 장 번호를 붙이면 그 장 1번 문제부터 바로 시작한다
+
 ## 문제 채우는 방법
 
 `js/data.js`의 `problems`에서 해당 문제의 `title`, `desc`, `flagHash`, `url`을 채운다.

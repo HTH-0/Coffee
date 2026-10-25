@@ -10,3 +10,9 @@ wargame reference/누끼 작업중/2차-격자정리/
 # 기타
 .DS_Store
 Thumbs.db
+
+# 서버 플래그 (실제 정답, 저장소에 올리지 않음)
+server/flags.json
+
+# 출제자용 풀이 문서 (정답이 담김, 저장소에 올리지 않음)
+wargame reference/2장-풀이-초안.md

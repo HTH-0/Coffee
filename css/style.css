@@ -19,6 +19,16 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+
+/* 테스트 패널 (배포 전에 지울 것) */
+#dev-panel { position: fixed; left: 10px; bottom: 10px; z-index: 9999; font-family: var(--mono); font-size: 12px; }
+#dev-panel .dev-toggle { background: rgba(20,14,8,.85); color: #FFC24A; border: 1px solid #5A4A36; border-radius: 6px; padding: 4px 10px; }
+#dev-panel .dev-body { display: none; margin-top: 6px; padding: 8px; background: rgba(20,14,8,.92); border: 1px solid #5A4A36; border-radius: 8px; max-width: 360px; }
+#dev-panel.open .dev-body { display: block; }
+#dev-panel .dev-row { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-bottom: 4px; }
+#dev-panel .dev-row b { width: 86px; color: #E8DEC8; font-weight: 400; }
+#dev-panel .dev-body button { background: #3A2C1C; color: #FFF4DA; border: 1px solid #5A4A36; border-radius: 4px; min-width: 24px; padding: 2px 6px; }
+#dev-panel .dev-body button:hover { background: #5A4226; }
 body { background: #0E0805; color: #fff; font-family: var(--sans); overflow: hidden; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }

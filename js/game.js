@@ -381,7 +381,7 @@
     $('#quest-eyebrow').textContent = c.id + '장 ' + c.name + ' · 문제 ' + p.no + ' / ' + MAX + (solved ? ' · 해결 완료' : '');
     $('#quest-title').textContent = p.title || '문제 준비 중';
     $('#quest-desc').innerHTML = (p.desc ? esc(p.desc) : '아직 문제 내용이 정해지지 않았습니다.') +
-      (solved ? '<br>이미 뚫은 세이브 포인트입니다.' : '<br>테스트 플래그 <code>test</code>를 입력하면 몬스터를 공격할 수 있습니다.');
+      (solved ? '<br>이미 뚫은 세이브 포인트입니다.' : p.flagHash ? '' : '<br>테스트 플래그 <code>test</code>를 입력하면 몬스터를 공격할 수 있습니다.');
     // http(s) 주소만 허용한다
     var frame = $('#quest-frame');
     var ok = typeof p.url === 'string' && /^https?:\/\//i.test(p.url);
@@ -517,6 +517,49 @@
     go('title');
   });
 
+  /* =========================================================
+     테스트 패널 (배포 전에 지울 것)
+     - 주소에 ?ch=2 또는 ?ch=2&no=3 을 붙이면 그 장/문제로 바로 전투 시작
+     - 화면 왼쪽 아래 작은 패널에서 장·문제를 눌러 이동
+     ========================================================= */
+  function jumpTo(ch, no) {
+    if (!(ch >= 1 && ch <= CHS.length)) return false;
+    var dmg = Math.min(Math.max((no || 1) - 1, 0), MAX - 1);
+    state = { ch: ch, dmg: dmg, ended: false };
+    save();
+    mapCh = ch;
+    go('battle');
+    return true;
+  }
+  function buildDevPanel() {
+    var el = document.createElement('div');
+    el.id = 'dev-panel';
+    var html = '<button type="button" class="dev-toggle">TEST ▾</button><div class="dev-body">';
+    CHS.forEach(function (c) {
+      html += '<div class="dev-row"><b>' + c.id + '장 ' + c.name + '</b>';
+      for (var n = 1; n <= MAX; n++) html += '<button type="button" data-ch="' + c.id + '" data-no="' + n + '">' + n + '</button>';
+      html += '</div>';
+    });
+    html += '<div class="dev-row"><button type="button" data-home>메인</button><button type="button" data-reset>기록 초기화</button></div></div>';
+    el.innerHTML = html;
+    document.body.appendChild(el);
+    el.querySelector('.dev-toggle').addEventListener('click', function () { el.classList.toggle('open'); });
+    el.addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-ch]');
+      if (b) return jumpTo(+b.getAttribute('data-ch'), +b.getAttribute('data-no'));
+      if (e.target.closest('[data-home]')) return go('title');
+      if (e.target.closest('[data-reset]')) { state = fresh(); save(); go('title'); }
+    });
+  }
+
   /* ---------- 시작 ---------- */
-  go('title');
+  buildDevPanel();
+  var params = new URLSearchParams(location.search);
+  var ch = +params.get('ch');
+  if (ch >= 1 && ch <= CHS.length) {
+    history.replaceState(null, '', location.pathname);
+    jumpTo(ch, +params.get('no'));
+  } else {
+    go('title');
+  }
 })();
