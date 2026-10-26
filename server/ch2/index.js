@@ -48,6 +48,7 @@ router.post('/:no/check', find, async (req, res) => {
   if (String(req.get('user-agent')).includes(bot.BOT_MARK)) return res.status(403).json({ ok: false, message: '봇은 확인 요청을 보낼 수 없습니다.' });
   if (!p.ready) return res.json({ ok: false, message: '아직 준비 중인 문제입니다.' });
   if (p.no === 5) return res.json({ ok: false, message: '알림창은 떴지만, 이 문제는 명예 관리인 화면에서 떠야 합니다. "명예 관리인에게 확인 요청"을 눌러 주세요.' });
+  if (p.no === 10) return res.json({ ok: false, message: '알림창은 떴지만, 이 문제는 대장 화면에서 떠야 합니다. "대장에게 검토 요청"을 눌러 주세요.' });
   if (p.no === 9) return res.json({ ok: false, message: '알림창은 떴지만, 이 문제는 검수관 화면에서 떠야 합니다. "검수관에게 검토 요청"을 눌러 주세요.' });
   if (!(url === prefix || ['?', '#', '/'].some(c => url.startsWith(prefix + c)))) {
     return res.json({ ok: false, message: '이 문제의 페이지 주소만 확인할 수 있습니다.' });
@@ -153,7 +154,10 @@ function reviewUI(no, label, hint, wait) { return '<div class="review"><button t
   '<script>(function(){var b=document.getElementById("review-btn");b.onclick=function(){' +
   'var s=document.getElementById("xss-status");s.className="status wait";s.textContent="' + wait + '";b.disabled=true;' +
   'fetch("/ch2/' + no + '/review",{method:"POST"}).then(function(r){return r.json()}).then(function(r){' +
-  'b.disabled=false;if(r.ok){s.className="status ok";s.textContent="관리자 화면에서 알림창 확인! 플래그: "+r.flag;}' +
+  'b.disabled=false;if(r.ok){s.className="status ok";s.textContent="관리자 화면에서 알림창 확인! 플래그: ";' +
+  'var c=document.createElement("code");c.textContent=r.flag;s.appendChild(c);s.appendChild(document.createTextNode(" "));' +
+  'var k=document.createElement("button");k.type="button";k.textContent="복사";' +
+  'k.onclick=function(){navigator.clipboard.writeText(r.flag).then(function(){k.textContent="복사됨";});};s.appendChild(k);}' +
   'else{s.className="status bad";s.textContent=r.message;}}).catch(function(){b.disabled=false;s.className="status bad";s.textContent="서버에 연결하지 못했습니다.";});};})();</script>'; }
 const REVIEW_UI = reviewUI(4, '검열관에게 검토 요청', '남긴 신고를 열매 군단 검열관이 열어 봅니다.', '검열관이 신고 목록을 여는 중...');
 
@@ -478,6 +482,105 @@ router.post('/9/review', async (req, res) => {
     res.json({ ok: false, message: '검토 중 오류가 났습니다. 잠시 뒤 다시 시도해 주세요.' });
   } finally {
     reviewing9.delete(id); pending.delete(req.ip);
+  }
+});
+
+// 10번 최종 통과 위젯 (postMessage, 대장 봇):
+//  - 참가자는 "통과 창" HTML 을 저장한다. 통과 창은 <iframe sandbox="allow-scripts"> 로 불러온다.
+//    allow-same-origin 이 없어서 출처가 서버와 달라지고(null), 부모 화면의 DOM 에 직접 접근할 수 없으며 alert 도 막힌다.
+//    포트가 하나뿐인 배포에서도 "다른 출처" 조건이 성립하게 하려는 선택이다. 통과 창 응답에도 같은 sandbox 를 CSP 로 건다.
+//  - 부모 화면(참가자 화면과 대장 화면 공통)의 message 리스너가 의도된 취약점이다:
+//    (a) 메시지를 보낸 쪽의 출처·창을 확인하지 않고, (b) 메시지의 html 값을 <script 글자만 한 번 걸러 낸 채 innerHTML 로 넣는다.
+//  - 최종 통과 코드(CAP-…)는 대장 화면(/admin/:id?key=)의 #captain-code 에만 있다. 참가자 화면에는 가짜 문구가 있다.
+const widgets = new Map(); // id -> {html, code}
+const ADMIN_KEY10 = require('crypto').randomBytes(16).toString('hex');
+const REVIEW10 = reviewUI(10, '대장에게 검토 요청', '저장한 통과 창을 대장이 대장 화면에서 열어 봅니다.', '대장이 통과 창을 여는 중...');
+const widgetTries = new Map(); // id -> Set(내용 해시): 힌트 횟수 (같은 내용을 다시 저장한 것은 세지 않는다)
+function reachedHints(id) {
+  const n = (widgetTries.get(id) || { size: 0 }).size;
+  return problems[9].hints.filter(h => n >= h.after).map(h => h.text);
+}
+function widgetHint(id, html) {
+  if (!widgetTries.has(id)) widgetTries.set(id, new Set());
+  const seen = widgetTries.get(id);
+  if (seen.size < 200) seen.add(require('crypto').createHash('md5').update(html).digest('hex'));
+  return reachedHints(id);
+}
+function ensureWidget(req, res) {
+  let id = readCookie(req, 'board10');
+  if (!BOARD_ID.test(id)) { id = randomId(); res.setHeader('Set-Cookie', 'board10=' + id + '; Path=/ch2/10; SameSite=Lax'); }
+  return id;
+}
+// 부모 화면의 메시지 리스너. 통과 창 iframe 보다 먼저 실행되어야 통과 창이 로드 직후 보내는 메시지도 받는다.
+const GATE_LISTENER = '<script>(function(){var out=document.getElementById("gate-result");' +
+  'window.addEventListener("message",function(e){var d=e.data;' +
+  'if(!d||typeof d!=="object"||d.type!=="gate"){out.textContent="받은 메시지가 통과 형식이 아닙니다.";return;}' +
+  'out.innerHTML=String(d.html||"").replace(/<script/gi,"");});})();</script>';
+const GATE_FRAME = id => '<iframe sandbox="allow-scripts" src="/ch2/10/widget/' + id + '" title="통과 창" style="width:100%;height:120px;border:1px solid #ccc"></iframe>';
+
+router.get('/10/play', (req, res) => {
+  const p = problems[9];
+  const id = ensureWidget(req, res);
+  const me = widgets.get(id);
+  const hint = reachedHints(id).map(t => '<p class="tip"><b>힌트</b> ' + esc(t) + '</p>').join('');
+  const body = title(p) +
+    '<p>열매 군단의 최종 관문입니다. 내 통과 창에 보여 줄 내용을 HTML 로 적어 저장하세요. 최대 2000자.</p>' +
+    '<p class="tip"><b>통과 창 연동 안내</b> 통과 창은 부모 화면(이 페이지)에 <code>postMessage</code> 로 결과를 보낼 수 있습니다. ' +
+    '메시지 형식은 <code>{ type: "gate", html: "보여 줄 내용" }</code> 이고, 부모 화면은 받은 <code>html</code> 을 아래 통과 결과에 표시합니다.</p>' +
+    '<form class="search" id="gate-form" style="flex-direction:column;align-items:stretch"><textarea id="gate-html" rows="5" maxlength="2000" placeholder="예: &lt;p&gt;열매 상자 12개 통과 신청&lt;/p&gt;">' + esc(me ? me.html : '') + '</textarea>' +
+    '<button>저장</button></form><p id="gate-msg" class="saved" hidden></p>' +
+    '<p>통과 결과</p><div id="gate-result" class="saved">아직 통과 창이 보낸 메시지가 없습니다.</div>' +
+    GATE_LISTENER + (me ? '<p>내 통과 창</p>' + GATE_FRAME(id) : '<p class="empty">아직 저장한 통과 창이 없습니다.</p>') +
+    hint + REVIEW10 + '<div id="captain-code" hidden>대장 화면에서만 표시됩니다</div>' +
+    '<script>(function(){var f=document.getElementById("gate-form"),m=document.getElementById("gate-msg");' +
+    'f.onsubmit=function(e){e.preventDefault();' +
+    'fetch("/ch2/10/widget",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({html:document.getElementById("gate-html").value})})' +
+    '.then(function(r){return r.json()}).then(function(r){m.hidden=false;m.textContent=r.message+(r.hint?" 힌트: "+r.hint:"");if(r.ok)setTimeout(function(){location.reload()},r.hint?4000:0);})' +
+    '.catch(function(){m.hidden=false;m.textContent="서버에 연결하지 못했습니다.";});};})();</script>';
+  res.send(page(p, body));
+});
+router.post('/10/widget', (req, res) => {
+  const id = ensureWidget(req, res);
+  const html = String((req.body && req.body.html) || '').slice(0, 2000);
+  if (!html.trim()) return res.json({ ok: false, message: '통과 창에 보여 줄 내용을 적어 주세요.' });
+  const hint = widgetHint(id, html);
+  const old = widgets.get(id);
+  widgets.set(id, { html, code: old ? old.code : 'CAP-' + randomId().slice(0, 8) });
+  res.json(hint.length ? { ok: true, message: '통과 창을 저장했습니다.', hint: hint.join(' / ') } : { ok: true, message: '통과 창을 저장했습니다.' });
+});
+// 통과 창 본문: 어떤 경로로 열리든 sandbox(allow-scripts) 로 제한해 출처가 서버와 달라지게 한다
+router.get('/10/widget/:id', (req, res) => {
+  const w = BOARD_ID.test(req.params.id) ? widgets.get(req.params.id) : null;
+  if (!w) return res.status(404).send('통과 창이 없습니다.');
+  res.set('Content-Security-Policy', 'sandbox allow-scripts').type('html').send(w.html);
+});
+router.get('/10/admin/:id', (req, res) => {
+  if (req.query.key !== ADMIN_KEY10) return res.status(403).send('대장만 열 수 있습니다.');
+  const p = problems[9];
+  const w = BOARD_ID.test(req.params.id) ? widgets.get(req.params.id) : null;
+  res.send(page(p, '<h1>열매 군단 선별장 <small>대장 화면</small></h1><p>통과 결과</p>' +
+    '<div id="gate-result" class="saved">아직 통과 창이 보낸 메시지가 없습니다.</div>' + GATE_LISTENER +
+    (w ? GATE_FRAME(req.params.id) + '<div id="captain-code" hidden>' + esc(w.code) + '</div>'
+       : '<p class="empty">접수된 통과 창이 없습니다.</p>')));
+});
+const reviewing10 = new Set();
+router.post('/10/review', async (req, res) => {
+  if (String(req.get('user-agent')).includes(bot.BOT_MARK)) return res.status(403).json({ ok: false, message: '봇은 요청할 수 없습니다.' });
+  const id = readCookie(req, 'board10');
+  const me = BOARD_ID.test(id) ? widgets.get(id) : null;
+  if (!me) return res.json({ ok: false, message: '먼저 통과 창을 저장해 주세요.' });
+  if (reviewing10.has(id) || pending.has(req.ip)) return res.json({ ok: false, message: '이전 검토가 아직 진행 중입니다. 잠시 뒤 다시 시도해 주세요.' });
+  reviewing10.add(id); pending.add(req.ip);
+  try {
+    const fired = await bot.check(config.origin + '/ch2/10/admin/' + id + '?key=' + ADMIN_KEY10, { answer: me.code });
+    res.json(fired
+      ? { ok: true, flag: config.flags.ch2[9] }
+      : { ok: false, message: '대장이 통과 창을 열어 봤지만 최종 통과 코드가 알림창에 뜨지 않았습니다.' });
+  } catch (e) {
+    console.error('[bot]', e.message);
+    res.json({ ok: false, message: '검토 중 오류가 났습니다. 잠시 뒤 다시 시도해 주세요.' });
+  } finally {
+    reviewing10.delete(id); pending.delete(req.ip);
   }
 });
 
