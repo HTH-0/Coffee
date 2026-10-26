@@ -35,7 +35,11 @@ router.get('/:no', (req, res) => res.redirect(req.baseUrl + '/' + encodeURICompo
 
 /* ---------- 확인 요청 ---------- */
 const pending = new Set(); // 같은 접속자가 확인 요청을 겹쳐 보내지 못하게
-const basketCodes = new Set(); // 7번: 지금 봇이 들고 있는 보관 코드 (확인이 끝나면 지워서 재사용 불가)
+// 7·8번: 확인 요청마다 숨긴 값(보관 코드, 결재 코드)을 새로 만들고, 봇만 HttpOnly 쿠키로 들고 간다.
+// 지금 봇이 들고 있는 코드만 문제 페이지에 진짜 값으로 나타나고, 확인이 끝나면 지워서 재사용할 수 없다.
+const SECRET_PAGES = { 7: { cookie: 'basket_pass', prefix: 'BASKET-' }, 8: { cookie: 'approval_pass', prefix: 'APPROVAL-' } };
+const activeCodes = new Set();
+const tries = new Map(); // 힌트가 있는 문제(8번): 참가자 쿠키 -> 지금까지 제출한 서로 다른 내용의 집합
 
 router.post('/:no/check', find, async (req, res) => {
   const p = req.problem;
@@ -49,15 +53,15 @@ router.post('/:no/check', find, async (req, res) => {
   }
   if (pending.has(req.ip)) return res.json({ ok: false, message: '이전 확인이 아직 진행 중입니다. 잠시 뒤 다시 시도해 주세요.' });
   pending.add(req.ip);
-  let basketCode = '';
+  let secretCode = '';
   try {
     // 6번: 봇은 열쇠 번호가 든 쿠키를 들고 연다 (참가자 브라우저에는 미지급 표시만 있음)
-    // 7번: 확인 요청마다 보관 코드를 새로 만들고, 봇만 HttpOnly 쿠키로 들고 간다
     let opts = p.no === 6 ? { answer: BENCH_KEY, cookies: [{ name: 'bench_key', value: BENCH_KEY }] } : { answer: p.answer };
-    if (p.no === 7) {
-      basketCode = 'BASKET-' + randomId().slice(0, 8);
-      basketCodes.add(basketCode);
-      opts = { answer: basketCode, cookies: [{ name: 'basket_pass', value: basketCode, httpOnly: true }] };
+    const secret = SECRET_PAGES[p.no];
+    if (secret) {
+      secretCode = secret.prefix + randomId().slice(0, 8);
+      activeCodes.add(secretCode);
+      opts = { answer: secretCode, cookies: [{ name: secret.cookie, value: secretCode, httpOnly: true }] };
     }
     const fired = await bot.check(url, opts);
     res.json(fired
@@ -68,7 +72,7 @@ router.post('/:no/check', find, async (req, res) => {
     res.json({ ok: false, message: '확인 중 오류가 났습니다. 잠시 뒤 다시 시도해 주세요.' });
   } finally {
     pending.delete(req.ip);
-    if (p.no === 7) basketCodes.delete(basketCode);
+    activeCodes.delete(secretCode);
   }
 });
 
@@ -318,9 +322,9 @@ router.get('/6/play', (req, res) => {
 router.get('/7/play', (req, res) => {
   const p = problems[6];
   const pass = readCookie(req, 'basket_pass');
-  const code = basketCodes.has(pass) ? pass : '직원 화면에서만 표시됩니다';
+  const code = activeCodes.has(pass) ? pass : '직원 화면에서만 표시됩니다';
   const body = title(p) +
-    '<p>바구니 번호를 치면 추천 목록이 바로 나타납니다. 주소 뒤에 <code>#번호</code>를 붙여 열면 그 번호로 바로 찾아 줍니다.</p>' +
+    '<p>바구니 번호를 치면 추천 목록이 바로 나타납니다. 치는 번호는 주소의 <code>#</code> 뒤에도 기록되어, 그 주소를 열면 같은 번호로 바로 찾아 줍니다.</p>' +
     '<form class="search" onsubmit="return false"><input id="basket-input" placeholder="예: B3" autocomplete="off"></form>' +
     '<p id="basket-msg" class="saved"></p><ul id="basket-list" class="menu"></ul>' +
     '<div id="basket-code" hidden>' + esc(code) + '</div>' +
@@ -331,9 +335,53 @@ router.get('/7/play', (req, res) => {
     'msg.innerHTML=v?"\\""+v+"\\" 번호의 바구니를 찾는 중":"";' +
     'var hits=BASKETS.filter(function(b){return v&&b.toLowerCase().indexOf(v.toLowerCase())===0;});' +
     'list.innerHTML=hits.map(function(b){return "<li>"+b+" 바구니</li>";}).join("");}' +
-    'input.addEventListener("input",function(){suggest(input.value);});' +
+    // 입력값을 주소의 # 에도 반영한다 (추천 목록을 주소로 공유할 수 있게)
+    'input.addEventListener("input",function(){suggest(input.value);' +
+    'history.replaceState(null,"",location.pathname+location.search+(input.value?"#"+encodeURIComponent(input.value):""));});' +
     'var h=decodeURIComponent(location.hash.slice(1));if(h){input.value=h;suggest(h);}' +
     '})();</script>';
+  res.send(page(p, body));
+});
+
+// 8번 선별 보고서 꾸미기 (필터 우회):
+//  - 보고서는 주소의 ?text= 로 받아 미리보기에 보여 준다. 선별장이 직접 만든 변환기가 꾸밈 문법을 HTML 로 바꾼다.
+//  - 변환 순서: ① 블랙리스트 필터 ② < > & 를 글자로 바꿈(그래서 직접 쓴 태그는 안 먹힘) ③ 꾸밈 문법을 HTML 로 바꿈
+//  - 의도된 허점 두 가지:
+//    (a) 블랙리스트가 일부 이름만 막고, 한 번만 지운다 (지운 뒤 다시 검사하지 않음)
+//    (b) ③ 에서 색·링크 값을 속성값 따옴표 안에 그대로 넣는다 (따옴표를 처리하지 않음)
+//  - 결재 코드는 #approval-code 에만 있다. 7번과 같이 봇이 HttpOnly 쿠키(approval_pass)를 들고 열 때만 진짜 값이 채워진다.
+function report8(raw) {
+  let s = String(raw).slice(0, 600);
+  s = s.replace(/<\/?script/gi, '');
+  s = s.replace(/on(error|load|click|mouseover)\s*=/gi, '');
+  s = s.replace(/javascript:/gi, '');
+  s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  s = s.replace(/\[색:([^\]]*)\]([\s\S]*?)\[\/색\]/g, '<span style="color:$1">$2</span>');
+  s = s.replace(/\[링크:([^|\]]*)\|([^\]]*)\]/g, '<a href="$1">$2</a>');
+  return s;
+}
+router.get('/8/play', (req, res) => {
+  const p = problems[7];
+  const text = typeof req.query.text === 'string' ? req.query.text : '';
+  const pass = readCookie(req, 'approval_pass');
+  const code = activeCodes.has(pass) ? pass : '결재 담당 화면에서만 표시됩니다';
+  // 힌트: 참가자(쿠키)가 제출한 서로 다른 보고서 내용이 p.hint.after 개가 되면 미리보기 아래에 힌트 상자를 보여 준다.
+  // 같은 내용을 새로고침한 것과 서버 봇이 연 것은 세지 않는다.
+  let hintBox = '';
+  if (p.hint) {
+    let id = readCookie(req, 'tries8');
+    if (!BOARD_ID.test(id)) { id = randomId(); res.append('Set-Cookie', 'tries8=' + id + '; Path=/ch2/8; SameSite=Lax'); }
+    if (!tries.has(id)) tries.set(id, new Set());
+    const seen = tries.get(id);
+    if (text && !String(req.get('user-agent')).includes(bot.BOT_MARK) && seen.size < 200) seen.add(text);
+    if (seen.size >= p.hint.after) hintBox = '<p class="tip"><b>힌트</b> ' + esc(p.hint.text) + '</p>';
+  }
+  const body = title(p) +
+    '<p>오늘 선별 결과를 보고서로 남기세요. 꾸밈 문법: <code>**굵게**</code>, <code>[색:red]글자[/색]</code>, <code>[링크:주소|글자]</code></p>' +
+    '<form class="search" method="get"><input name="text" value="' + esc(text) + '" placeholder="예: **A1** 바구니 [색:red]불량 3개[/색]" autocomplete="off"><button>미리보기</button></form>' +
+    (text ? '<div class="saved" id="report">' + report8(text) + '</div>' : '<p class="empty">아직 작성한 보고서가 없습니다.</p>') +
+    hintBox + '<div id="approval-code" hidden>' + esc(code) + '</div>';
   res.send(page(p, body));
 });
 
