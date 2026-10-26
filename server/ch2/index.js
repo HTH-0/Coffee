@@ -48,6 +48,7 @@ router.post('/:no/check', find, async (req, res) => {
   if (String(req.get('user-agent')).includes(bot.BOT_MARK)) return res.status(403).json({ ok: false, message: '봇은 확인 요청을 보낼 수 없습니다.' });
   if (!p.ready) return res.json({ ok: false, message: '아직 준비 중인 문제입니다.' });
   if (p.no === 5) return res.json({ ok: false, message: '알림창은 떴지만, 이 문제는 명예 관리인 화면에서 떠야 합니다. "명예 관리인에게 확인 요청"을 눌러 주세요.' });
+  if (p.no === 9) return res.json({ ok: false, message: '알림창은 떴지만, 이 문제는 검수관 화면에서 떠야 합니다. "검수관에게 검토 요청"을 눌러 주세요.' });
   if (!(url === prefix || ['?', '#', '/'].some(c => url.startsWith(prefix + c)))) {
     return res.json({ ok: false, message: '이 문제의 페이지 주소만 확인할 수 있습니다.' });
   }
@@ -383,6 +384,101 @@ router.get('/8/play', (req, res) => {
     (text ? '<div class="saved" id="report">' + report8(text) + '</div>' : '<p class="empty">아직 작성한 보고서가 없습니다.</p>') +
     hintBox + '<div id="approval-code" hidden>' + esc(code) + '</div>';
   res.send(page(p, body));
+});
+
+// 9번 불량 열매 사진 (파일 업로드, 검수관 봇):
+//  - 사진은 /play 에서 올리고, 참가자 화면에는 <img> 로만 보여 준다 (그 안에서는 스크립트가 실행되지 않음).
+//  - 업로드 검사: 확장자 png·jpg·gif·svg 만 받는다. 내용은 정화하지 않고 "<script" 글자만 한 번 걸러 낸다 (의도된 허점).
+//    올린 파일은 서버 주소(/ch2/9/file/:id)에서 확장자에 맞는 형식(svg 는 image/svg+xml)으로 그대로 열린다.
+//  - 검수관 화면(/admin/:id?key=)은 올린 사진을 같은 서버 주소의 <iframe> 으로 불러온다 (의도된 취약점: 같은 출처라 부모 화면에 접근 가능).
+//    참가자별 합격 기준 코드(CRIT-…)는 검수관 화면의 #criteria-code 에만 있다. 참가자 화면에는 같은 모양의 가짜 문구가 있다.
+const photos = new Map(); // id -> {ext, buf, code}
+const ADMIN_KEY9 = require('crypto').randomBytes(16).toString('hex');
+const PHOTO_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml' };
+const REVIEW9 = reviewUI(9, '검수관에게 검토 요청', '올린 사진을 검수관이 검수 화면에서 열어 봅니다.', '검수관이 사진을 여는 중...');
+// 힌트 횟수: 참가자(쿠키)가 올려 본 서로 다른 파일 내용의 집합. 같은 파일을 다시 올린 것은 세지 않는다.
+const photoTries = new Map(); // id -> Set(내용 해시)
+function photoHint(id, buf) {
+  const h = problems[8].hint;
+  if (!photoTries.has(id)) photoTries.set(id, new Set());
+  const seen = photoTries.get(id);
+  if (seen.size < 200) seen.add(require('crypto').createHash('md5').update(buf).digest('hex'));
+  return seen.size >= h.after ? h.text : '';
+}
+function ensurePhoto(req, res) {
+  let id = readCookie(req, 'board9');
+  if (!BOARD_ID.test(id)) { id = randomId(); res.setHeader('Set-Cookie', 'board9=' + id + '; Path=/ch2/9; SameSite=Lax'); }
+  return id;
+}
+router.get('/9/play', (req, res) => {
+  const p = problems[8];
+  const id = ensurePhoto(req, res);
+  const me = photos.get(id);
+  const body = title(p) +
+    '<p>골라낸 불량 열매의 사진을 올리세요. 이미지 파일(png, jpg, gif, svg)만 받습니다. 최대 20KB.</p>' +
+    '<form class="search" id="photo-form"><input type="file" id="photo-file" accept=".png,.jpg,.jpeg,.gif,.svg"><button>올리기</button></form>' +
+    '<p id="photo-msg" class="saved" hidden></p>' +
+    (me ? '<p>내 사진</p><p><img src="/ch2/9/file/' + id + '?t=' + Date.now() + '" alt="내 사진" style="max-width:240px;max-height:240px;border:1px solid #ccc"></p>'
+        : '<p class="empty">아직 올린 사진이 없습니다.</p>') +
+    ((photoTries.get(id) || { size: 0 }).size >= p.hint.after ? '<p class="tip"><b>힌트</b> ' + esc(p.hint.text) + '</p>' : '') +
+    REVIEW9 + '<div id="criteria-code" hidden>검수관 화면에서만 표시됩니다</div>' +
+    '<script>(function(){var f=document.getElementById("photo-form"),m=document.getElementById("photo-msg");' +
+    'f.onsubmit=function(e){e.preventDefault();var file=document.getElementById("photo-file").files[0];' +
+    'if(!file){m.hidden=false;m.textContent="파일을 골라 주세요.";return;}' +
+    'fetch("/ch2/9/upload?name="+encodeURIComponent(file.name),{method:"POST",headers:{"Content-Type":"application/octet-stream"},body:file})' +
+    '.then(function(r){return r.json()}).then(function(r){m.hidden=false;m.textContent=r.message+(r.hint?" 힌트: "+r.hint:"");if(r.ok)setTimeout(function(){location.reload()},r.hint?4000:0);})' +
+    '.catch(function(){m.hidden=false;m.textContent="서버에 연결하지 못했습니다.";});};})();</script>';
+  res.send(page(p, body));
+});
+router.post('/9/upload', express.raw({ type: () => true, limit: '20kb' }), (req, res) => {
+  const id = ensurePhoto(req, res);
+  const m = /\.([A-Za-z0-9]+)$/.exec(String(req.query.name || ''));
+  const ext = m ? m[1].toLowerCase() : '';
+  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!buf.length) return res.json({ ok: false, message: '빈 파일이거나 20KB 를 넘는 파일입니다.' });
+  // 거절된 업로드도 시도로 센다. 기준에 도달하면 응답에 힌트를 함께 보낸다.
+  const hint = photoHint(id, buf);
+  const reply = o => res.json(hint ? Object.assign(o, { hint }) : o);
+  if (!PHOTO_TYPES[ext]) return reply({ ok: false, message: '이미지 파일(png, jpg, gif, svg)만 올릴 수 있습니다.' });
+  // 의도된 허점: 눈에 띄는 스크립트 태그만 한 번 걸러 낸다. 그 밖의 내용은 그대로 저장한다.
+  if (/<script/i.test(buf.toString('utf8'))) return reply({ ok: false, message: '위험한 내용이 들어 있는 파일은 받을 수 없습니다.' });
+  const old = photos.get(id);
+  photos.set(id, { ext, buf, code: old ? old.code : 'CRIT-' + randomId().slice(0, 8) });
+  reply({ ok: true, message: '사진을 올렸습니다.' });
+});
+router.get('/9/file/:id', (req, res) => {
+  const f = BOARD_ID.test(req.params.id) ? photos.get(req.params.id) : null;
+  if (!f) return res.status(404).send('사진이 없습니다.');
+  res.type(PHOTO_TYPES[f.ext]).send(f.buf);
+});
+router.get('/9/admin/:id', (req, res) => {
+  if (req.query.key !== ADMIN_KEY9) return res.status(403).send('검수관만 열 수 있습니다.');
+  const p = problems[8];
+  const f = BOARD_ID.test(req.params.id) ? photos.get(req.params.id) : null;
+  res.send(page(p, '<h1>열매 군단 선별장 <small>검수관 화면</small></h1><p>접수된 불량 열매 사진</p>' +
+    (f ? '<iframe src="/ch2/9/file/' + req.params.id + '" title="사진" style="width:260px;height:260px;border:1px solid #ccc"></iframe>' +
+         '<div id="criteria-code" hidden>' + esc(f.code) + '</div>'
+       : '<p class="empty">접수된 사진이 없습니다.</p>')));
+});
+const reviewing9 = new Set();
+router.post('/9/review', async (req, res) => {
+  if (String(req.get('user-agent')).includes(bot.BOT_MARK)) return res.status(403).json({ ok: false, message: '봇은 요청할 수 없습니다.' });
+  const id = readCookie(req, 'board9');
+  const me = BOARD_ID.test(id) ? photos.get(id) : null;
+  if (!me) return res.json({ ok: false, message: '먼저 사진을 올려 주세요.' });
+  if (reviewing9.has(id) || pending.has(req.ip)) return res.json({ ok: false, message: '이전 검토가 아직 진행 중입니다. 잠시 뒤 다시 시도해 주세요.' });
+  reviewing9.add(id); pending.add(req.ip);
+  try {
+    const fired = await bot.check(config.origin + '/ch2/9/admin/' + id + '?key=' + ADMIN_KEY9, { answer: me.code });
+    res.json(fired
+      ? { ok: true, flag: config.flags.ch2[8] }
+      : { ok: false, message: '검수관이 사진을 열어 봤지만 합격 기준 코드가 알림창에 뜨지 않았습니다.' });
+  } catch (e) {
+    console.error('[bot]', e.message);
+    res.json({ ok: false, message: '검토 중 오류가 났습니다. 잠시 뒤 다시 시도해 주세요.' });
+  } finally {
+    reviewing9.delete(id); pending.delete(req.ip);
+  }
 });
 
 // 아직 만들지 않은 문제: 안내 띠와 준비 중 표시
