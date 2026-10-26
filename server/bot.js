@@ -10,7 +10,7 @@ const config = require('./config');
 const BOT_MARK = 'KLOADBot';
 let queue = Promise.resolve();
 
-// opts.answer: 알림창에 떠야 하는 내용 / opts.cookies: 봇이 들고 열 쿠키 [{name,value}] (6번 쿠키 문제용)
+// opts.answer: 알림창에 떠야 하는 내용 / opts.cookies: 봇이 들고 열 쿠키 [{name,value,httpOnly}] (6·7번용)
 function check(url, opts) {
   const run = queue.then(() => visit(url, opts || {}));
   queue = run.catch(() => {});
@@ -27,7 +27,7 @@ async function visit(url, opts) {
     await page.setUserAgent((await browser.userAgent()) + ' ' + BOT_MARK);
     if (opts.cookies && opts.cookies.length) {
       const host = new URL(config.origin).hostname;
-      await page.setCookie(...opts.cookies.map(c => ({ name: c.name, value: c.value, domain: host, path: '/' })));
+      await page.setCookie(...opts.cookies.map(c => ({ name: c.name, value: c.value, domain: host, path: '/', httpOnly: !!c.httpOnly })));
     }
     page.on('dialog', d => {
       if (answer === undefined || d.message() === answer) fired = true;

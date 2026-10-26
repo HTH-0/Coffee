@@ -35,6 +35,7 @@ router.get('/:no', (req, res) => res.redirect(req.baseUrl + '/' + encodeURICompo
 
 /* ---------- 확인 요청 ---------- */
 const pending = new Set(); // 같은 접속자가 확인 요청을 겹쳐 보내지 못하게
+const basketCodes = new Set(); // 7번: 지금 봇이 들고 있는 보관 코드 (확인이 끝나면 지워서 재사용 불가)
 
 router.post('/:no/check', find, async (req, res) => {
   const p = req.problem;
@@ -48,9 +49,16 @@ router.post('/:no/check', find, async (req, res) => {
   }
   if (pending.has(req.ip)) return res.json({ ok: false, message: '이전 확인이 아직 진행 중입니다. 잠시 뒤 다시 시도해 주세요.' });
   pending.add(req.ip);
+  let basketCode = '';
   try {
     // 6번: 봇은 열쇠 번호가 든 쿠키를 들고 연다 (참가자 브라우저에는 미지급 표시만 있음)
-    const opts = p.no === 6 ? { answer: BENCH_KEY, cookies: [{ name: 'bench_key', value: BENCH_KEY }] } : { answer: p.answer };
+    // 7번: 확인 요청마다 보관 코드를 새로 만들고, 봇만 HttpOnly 쿠키로 들고 간다
+    let opts = p.no === 6 ? { answer: BENCH_KEY, cookies: [{ name: 'bench_key', value: BENCH_KEY }] } : { answer: p.answer };
+    if (p.no === 7) {
+      basketCode = 'BASKET-' + randomId().slice(0, 8);
+      basketCodes.add(basketCode);
+      opts = { answer: basketCode, cookies: [{ name: 'basket_pass', value: basketCode, httpOnly: true }] };
+    }
     const fired = await bot.check(url, opts);
     res.json(fired
       ? { ok: true, flag: config.flags.ch2[p.no - 1] }
@@ -60,6 +68,7 @@ router.post('/:no/check', find, async (req, res) => {
     res.json({ ok: false, message: '확인 중 오류가 났습니다. 잠시 뒤 다시 시도해 주세요.' });
   } finally {
     pending.delete(req.ip);
+    if (p.no === 7) basketCodes.delete(basketCode);
   }
 });
 
@@ -298,6 +307,33 @@ router.get('/6/play', (req, res) => {
     '<p>선별대 이름을 입력하면 확인한 선별대로 기억해 둡니다.</p>' +
     '<form class="search"><input name="bench" placeholder="예: B3 선별대" autocomplete="off"><button>확인</button></form>' +
     '<p class="saved">최근 확인한 선별대: ' + (bench || '없음') + '</p>';
+  res.send(page(p, body));
+});
+
+// 7번 바구니 번호 자동완성 (DOM 기반):
+//  - 서버는 입력값을 전혀 출력하지 않는다. 취약한 곳은 이 페이지의 스크립트다.
+//  - 주소의 # 뒤 값(해시)과 입력칸 값을 "찾는 중" 안내에 innerHTML 로 그대로 넣는다 (의도된 취약점). 해시는 서버로 전달되지 않는다.
+//  - 보관 코드는 #basket-code 에만 있다. 서버 봇이 HttpOnly 쿠키(basket_pass)를 들고 열 때만 진짜 코드가 채워지고,
+//    참가자 화면에는 같은 모양의 요소에 안내 문구만 있다. 쿠키는 HttpOnly 라 document.cookie 로는 읽히지 않는다.
+router.get('/7/play', (req, res) => {
+  const p = problems[6];
+  const pass = readCookie(req, 'basket_pass');
+  const code = basketCodes.has(pass) ? pass : '직원 화면에서만 표시됩니다';
+  const body = title(p) +
+    '<p>바구니 번호를 치면 추천 목록이 바로 나타납니다. 주소 뒤에 <code>#번호</code>를 붙여 열면 그 번호로 바로 찾아 줍니다.</p>' +
+    '<form class="search" onsubmit="return false"><input id="basket-input" placeholder="예: B3" autocomplete="off"></form>' +
+    '<p id="basket-msg" class="saved"></p><ul id="basket-list" class="menu"></ul>' +
+    '<div id="basket-code" hidden>' + esc(code) + '</div>' +
+    '<script>(function(){' +
+    'var BASKETS=["A1","A2","B1","B2","B3","C1","C2"];' +
+    'var input=document.getElementById("basket-input"),msg=document.getElementById("basket-msg"),list=document.getElementById("basket-list");' +
+    'function suggest(v){' +
+    'msg.innerHTML=v?"\\""+v+"\\" 번호의 바구니를 찾는 중":"";' +
+    'var hits=BASKETS.filter(function(b){return v&&b.toLowerCase().indexOf(v.toLowerCase())===0;});' +
+    'list.innerHTML=hits.map(function(b){return "<li>"+b+" 바구니</li>";}).join("");}' +
+    'input.addEventListener("input",function(){suggest(input.value);});' +
+    'var h=decodeURIComponent(location.hash.slice(1));if(h){input.value=h;suggest(h);}' +
+    '})();</script>';
   res.send(page(p, body));
 });
 
